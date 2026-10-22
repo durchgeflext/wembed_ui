@@ -286,6 +286,8 @@ pub struct Settings {
     /// Resolved `[density]` params. `Some` iff density mode is enabled (section present OR
     /// a `--density*` flag passed). `None` = normal points/edges rendering.
     pub density: Option<DensityParams>,
+    /// GUI-only mode: wait for user input before starting embedding iterations.
+    pub interactive: bool,
 
     // ---- headless ----
     pub headless: bool,
@@ -318,7 +320,8 @@ impl Settings {
     /// half-specified `[export]` section, or a `headless` run with neither `-o` nor
     /// `--output-embedding` (nothing to do).
     pub fn resolve(cli: Cli, file: FileConfig) -> Result<Settings> {
-        // Split the subcommand: `headless` carries the headless-only knobs, `gui` none.
+        let mut interactive = false;
+        // Split the subcommand: headless-only knobs:
         let mut headless = false;
         let mut output = None;
         let mut resolution_cli = None;
@@ -326,7 +329,10 @@ impl Settings {
         let mut autorotate = false;
         let mut output_embedding = None;
         let common = match cli.command {
-            Command::Gui(g) => g.common,
+            Command::Gui(g) => {
+                interactive = g.interactive;
+                g.common
+            }
             Command::Headless(r) => {
                 headless = true;
                 output = r.output;
@@ -622,6 +628,7 @@ impl Settings {
             camera: file.camera,
             export_dims,
             headless,
+            interactive,
             output,
             resolution: pick(resolution_cli, export_dims, defaults::RESOLUTION),
             rotation_deg_cli,
@@ -700,6 +707,7 @@ mod tests {
         assert_eq!(s.resolution, (3840, 2160), "resolution default");
         assert_eq!(s.visual, default_visual(), "visual baseline");
         assert!(!s.headless, "gui subcommand is not headless");
+        assert!(!s.interactive, "GUI starts immediately by default");
         // LR-schedule defaults mirror wembed's Options — exponential + the numeric knobs.
         assert_eq!(s.embedder.lr_schedule, crate::cli::LrSchedule::Exponential);
         assert_eq!(
@@ -715,6 +723,13 @@ mod tests {
         // Stopping-criterion defaults mirror wembed's Options (loss by default).
         assert_eq!(s.embedder.stop_criterion, crate::cli::StopCriterion::Loss);
         assert_eq!(s.embedder.stop_displacement_tol, 3e-4);
+    }
+
+    #[test]
+    fn gui_interactive_flag_pauses_before_embedding() {
+        let s = Settings::resolve(cli(&["g.edg", "--interactive"]), FileConfig::empty())
+            .expect("resolve ok");
+        assert!(s.interactive);
     }
 
     // ---- defaults track wembed ----

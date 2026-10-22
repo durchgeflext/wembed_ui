@@ -135,6 +135,7 @@ fn main() -> Result<()> {
             let handle = embedder::spawn(SpawnConfig {
                 graph_path: settings.graph_path.clone(),
                 embedder: settings.embedder,
+                start_paused: settings.interactive,
             })?;
             Box::new(handle)
         };

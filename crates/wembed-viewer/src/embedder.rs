@@ -385,6 +385,8 @@ pub struct SpawnConfig {
     /// The fully-resolved embedder knobs (iterations, seed, LR schedule, …). Carried
     /// whole rather than field-by-field so adding an `Options` knob is one struct edit.
     pub embedder: crate::settings::EmbedderParams,
+    /// Start the worker paused after it has loaded and published the initial embedding.
+    pub start_paused: bool,
 }
 
 /// Worker-side view of `SpawnConfig`: `graph_path` is a `String` because the FFI wants
@@ -428,7 +430,7 @@ pub fn spawn(cfg: SpawnConfig) -> Result<EmbedderHandle> {
         error: None,
     }));
     let stop = Arc::new(AtomicBool::new(false));
-    let paused = Arc::new(AtomicBool::new(false));
+    let paused = Arc::new(AtomicBool::new(cfg.start_paused));
     let finished = Arc::new(AtomicBool::new(false));
 
     let channels = WorkerChannels {

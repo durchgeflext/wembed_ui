@@ -540,6 +540,7 @@ mod tests {
         let mut producer = crate::embedder::spawn(crate::embedder::SpawnConfig {
             graph_path: "does/not/exist.edg".into(),
             embedder: settings.embedder,
+            start_paused: false, //headless has no reason to pause and no possibility to resume
         })
         .unwrap();
         let Err(err) = drain_producer(&mut producer) else {

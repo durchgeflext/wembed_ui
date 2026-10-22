@@ -189,6 +189,10 @@ pub enum Command {
 pub struct GuiArgs {
     #[command(flatten)]
     pub common: CommonArgs,
+
+    /// Pause after loading the initial embedding, before the first iteration.
+    #[arg(long)]
+    pub interactive: bool,
 }
 
 #[derive(Args, Debug)]
