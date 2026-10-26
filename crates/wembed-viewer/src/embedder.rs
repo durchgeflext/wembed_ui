@@ -16,7 +16,7 @@
 //!   is a future feature — the state machine already allows it.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -211,6 +211,9 @@ pub trait TopologyProducer {
     /// Flip pause state. No-op for producers that don't have a run loop.
     fn toggle_paused(&self) {}
 
+    /// Advance one iteration while paused. No-op for producers without a step loop.
+    fn step_once(&self) {}
+
     /// Number of iterations completed. `0` for producers without a step loop.
     fn iteration(&self) -> u64 {
         0
@@ -293,6 +296,8 @@ pub struct EmbedderHandle {
     /// Consumer toggles to pause/resume the step loop. Worker sets it to true when the
     /// embedder finishes so the App transitions cleanly into the paused view.
     paused: Arc<AtomicBool>,
+    /// Queued one-step requests, consumed by the worker only while paused.
+    step_requests: Arc<AtomicU64>,
     /// Set once by the worker when `Embedder::is_finished()` returns true. Sticky — never
     /// clears. Consumer uses it to disable the Resume button (resuming a finished embedder
     /// would just re-pause on the next worker tick).
@@ -348,7 +353,31 @@ impl TopologyProducer for EmbedderHandle {
         if self.finished.load(Ordering::Acquire) {
             return;
         }
+        if self.paused.load(Ordering::Acquire) {
+            self.step_requests.store(0, Ordering::Release);
+        }
         self.paused.fetch_xor(true, Ordering::AcqRel);
+    }
+
+    fn step_once(&self) {
+        if self.paused.load(Ordering::Acquire) && !self.finished.load(Ordering::Acquire) {
+            loop {
+                let pending = self.step_requests.load(Ordering::Acquire);
+                if pending == u64::MAX
+                    || self
+                        .step_requests
+                        .compare_exchange_weak(
+                            pending,
+                            pending + 1,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                {
+                    break;
+                }
+            }
+        }
     }
 
     /// Number of embedder steps completed at the time of the last `poll`. The first publish
@@ -404,6 +433,7 @@ struct WorkerChannels {
     shared: Arc<Mutex<Shared>>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    step_requests: Arc<AtomicU64>,
     finished: Arc<AtomicBool>,
 }
 
@@ -431,12 +461,14 @@ pub fn spawn(cfg: SpawnConfig) -> Result<EmbedderHandle> {
     }));
     let stop = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(cfg.start_paused));
+    let step_requests = Arc::new(AtomicU64::new(0));
     let finished = Arc::new(AtomicBool::new(false));
 
     let channels = WorkerChannels {
         shared: Arc::clone(&shared),
         stop: Arc::clone(&stop),
         paused: Arc::clone(&paused),
+        step_requests: Arc::clone(&step_requests),
         finished: Arc::clone(&finished),
     };
 
@@ -449,6 +481,7 @@ pub fn spawn(cfg: SpawnConfig) -> Result<EmbedderHandle> {
         shared,
         stop,
         paused,
+        step_requests,
         finished,
         handle: Some(handle),
         last_topology_gen: 0,
@@ -629,8 +662,10 @@ fn worker_loop(cfg: &WorkerConfig, ch: &WorkerChannels) -> Result<()> {
             continue;
         }
         if ch.paused.load(Ordering::Acquire) {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            continue;
+            if !take_step_request(&ch.step_requests) {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                continue;
+            }
         }
         wembed.step();
         step_count += 1;
@@ -648,6 +683,26 @@ fn worker_loop(cfg: &WorkerConfig, ch: &WorkerChannels) -> Result<()> {
         g.progress = Some(progress);
     }
     Ok(())
+}
+
+fn take_step_request(requests: &AtomicU64) -> bool {
+    loop {
+        let pending = requests.load(Ordering::Acquire);
+        if pending == 0 {
+            return false;
+        }
+        if requests
+            .compare_exchange_weak(
+                pending,
+                pending - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            return true;
+        }
+    }
 }
 
 /// Publish the current graph's edges + coordinates as a new topology. Called on worker
@@ -688,6 +743,14 @@ fn publish_positions(shared: &Mutex<Shared>, wembed: &mut Wembed) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn step_requests_are_consumed_one_at_a_time() {
+        let requests = AtomicU64::new(2);
+        assert!(take_step_request(&requests));
+        assert!(take_step_request(&requests));
+        assert!(!take_step_request(&requests));
+    }
 
     /// wembed hands out its edges sorted; the input graph must keep the file's line order so
     /// `--edge-colors` line i colors the same edge live as on `.emb` replay.

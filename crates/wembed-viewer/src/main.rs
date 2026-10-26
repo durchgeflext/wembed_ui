@@ -168,6 +168,7 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let init = AppInit {
+        interactive: settings.interactive,
         visual: settings.visual,
         search: settings.search.clone(),
         camera: settings.camera.clone(),

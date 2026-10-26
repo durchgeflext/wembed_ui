@@ -303,6 +303,8 @@ impl VisualState {
 /// Startup bundle for [`App::new`] — everything `main` resolves from CLI + TOML that the
 /// interactive session needs beyond the producer/attrs/themes/sizing it already took.
 pub struct AppInit {
+    /// Whether the GUI is in debugger-like interactive mode with single-step controls.
+    pub interactive: bool,
     /// Initial visual state (color mode + channel toggles + slider scales).
     pub visual: VisualState,
     /// `[visual].search` — pre-fills the search box; applied on the first topology
@@ -330,6 +332,7 @@ pub struct App {
     /// the source is a live [`crate::embedder::EmbedderHandle`] or (future) a load-once
     /// `LoadedEmbedding`.
     embedder: Box<dyn TopologyProducer>,
+    interactive: bool,
     sizing: SizingConfig,
     /// Raw d-dim positions, reused across frames — embedder writes into it on poll.
     /// NEVER read by the render/camera/pick stack (that's `view_positions`); kept for
@@ -504,6 +507,7 @@ impl App {
         let embedder_params = init.session.embedder;
         Self {
             embedder,
+            interactive: init.interactive,
             sizing,
             frame_positions: Vec::new(),
             view_positions: Vec::new(),
@@ -921,6 +925,7 @@ impl App {
         // Captured by the closures below and consulted after `run`. Egui can't call back
         // into `self` directly (borrow-checker), so button/radio state rides through scalars.
         let mut toggle_pause = false;
+        let mut step_once_requested = false;
         let mut new_visual = visual_before;
         let mut new_export = export_before;
         let mut export_requested = false;
@@ -960,9 +965,11 @@ impl App {
                 embedder_error.as_deref(),
                 n_vertices,
                 n_edges,
+                self.interactive,
                 paused,
                 finished,
                 &mut toggle_pause,
+                &mut step_once_requested,
                 &mut new_visual,
                 &mut new_export,
                 &mut export_requested,
@@ -1007,6 +1014,9 @@ impl App {
         }
         if toggle_pause {
             self.embedder.toggle_paused();
+        }
+        if step_once_requested {
+            self.embedder.step_once();
         }
         if new_visual != visual_before {
             self.visual = new_visual;
@@ -1965,9 +1975,11 @@ fn build_ui(
     error: Option<&str>,
     n_vertices: usize,
     n_edges: usize,
+    interactive: bool,
     paused: bool,
     finished: bool,
     toggle_pause: &mut bool,
+    step_once_requested: &mut bool,
     visual: &mut VisualState,
     export: &mut ExportSettings,
     export_requested: &mut bool,
@@ -2047,6 +2059,11 @@ fn build_ui(
                     };
                     if ui.button(label).clicked() {
                         *toggle_pause = true;
+                    }
+                }
+                if interactive && paused && !finished && error.is_none() {
+                    if ui.button("step").clicked() {
+                        *step_once_requested = true;
                     }
                 }
                 // Re-fit the camera to the current graph — undoes pan/zoom drift while
