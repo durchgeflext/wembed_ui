@@ -703,9 +703,11 @@ impl App {
         self.embedder.drain_metrics(self.convergence.samples_mut());
 
         // ---- embedder poll → maybe update GPU positions + refit camera ----
+        let mut positions_changed = false;
         match self.embedder.poll(&mut self.frame_positions) {
             Update::Nothing => {}
             Update::Positions => {
+                positions_changed = true;
                 // project BEFORE the camera refit — everything downstream reads the view
                 self.projector
                     .update_view(&self.frame_positions, &mut self.view_positions);
@@ -722,6 +724,7 @@ impl App {
                 self.push_view();
             }
             Update::Topology(topology) => {
+                positions_changed = true;
                 let Some(window) = self.window.clone() else {
                     return;
                 };
@@ -848,11 +851,17 @@ impl App {
         // `sync` handles all Live↔Paused↔Finished transitions internally: building the
         // picker on entering inspection, dropping it on leaving, transferring the session
         // between Paused and Finished without rebuilding.
+        if positions_changed {
+            self.inspection.update_positions(&self.view_positions);
+        }
         self.inspection.sync(
             self.embedder.is_paused(),
             self.embedder.is_finished(),
             &self.view_positions,
         );
+        if positions_changed {
+            self.update_hover();
+        }
 
         // Read everything we need off `self` BEFORE grabbing the mutable borrows of
         // `egui_winit_state` and `renderer` — hover_tooltip() wants `&self` which the

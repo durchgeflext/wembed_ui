@@ -117,6 +117,23 @@ impl InspectionMode {
         };
     }
 
+    /// Rebuild the picker after a single-step or topology update while inspection remains
+    /// active. Position changes invalidate both the spatial index and the hovered vertex.
+    pub fn update_positions(&mut self, positions: &[f32]) {
+        let current = std::mem::replace(self, InspectionMode::Live);
+        *self = match current {
+            InspectionMode::Live => InspectionMode::Live,
+            InspectionMode::Paused(_) => match Session::new(positions) {
+                Some(session) => InspectionMode::Paused(session),
+                None => InspectionMode::Live,
+            },
+            InspectionMode::Finished(_) => match Session::new(positions) {
+                Some(session) => InspectionMode::Finished(session),
+                None => InspectionMode::Live,
+            },
+        };
+    }
+
     /// Update hover from a cursor world-position. No-op in Live. When the
     /// cursor doesn't hit any vertex, hover becomes `None`.
     pub fn hit_test(&mut self, cursor_world: [f32; 2], rendered_radius: f32) {
@@ -211,6 +228,23 @@ mod tests {
         mode.sync(true, true, &positions);
         assert!(mode.is_finished());
         assert_eq!(mode.hover(), hover_before);
+    }
+
+    #[test]
+    fn paused_position_update_rebuilds_picker_and_clears_hover() {
+        let mut mode = InspectionMode::new();
+        let initial = [0.0_f32, 0.0, 10.0, 10.0];
+        mode.sync(true, false, &initial);
+        mode.hit_test([0.0, 0.0], 1.0);
+        assert_eq!(mode.hover(), Some(0));
+
+        let stepped = [10.0_f32, 10.0, 20.0, 20.0];
+        mode.update_positions(&stepped);
+        assert_eq!(mode.hover(), None);
+        mode.hit_test([0.0, 0.0], 1.0);
+        assert_eq!(mode.hover(), None, "old positions must not remain pickable");
+        mode.hit_test([10.0, 10.0], 1.0);
+        assert_eq!(mode.hover(), Some(0), "new positions must be pickable");
     }
 
     #[test]
