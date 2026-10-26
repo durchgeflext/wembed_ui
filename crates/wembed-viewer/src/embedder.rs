@@ -238,12 +238,23 @@ pub trait TopologyProducer {
 /// One-line progress summary shared by the status strip and the headless heartbeat, e.g.
 /// `layer 3/7 · iter 640/~1200 · ETA 1m42s`. Parts wembed can't estimate yet are omitted.
 pub fn format_progress(p: &Progress) -> String {
+    format_progress_at_iteration(p, p.iteration)
+}
+
+/// Format progress using the consumer's monotonic published-step count rather than the
+/// embedder's per-layer iteration field. This is useful in the GUI, where a single overall
+/// iteration counter should continue across layered transitions.
+pub fn format_progress_with_iteration(p: &Progress, iteration: u64) -> String {
+    format_progress_at_iteration(p, iteration)
+}
+
+fn format_progress_at_iteration(p: &Progress, iteration: impl std::fmt::Display) -> String {
     let mut out = String::new();
     if p.num_layers > 1 {
         out += &layer_label(p.layer, p.num_layers);
         out += " · ";
     }
-    out += &format!("iter {}", p.iteration);
+    out += &format!("iter {iteration}");
     if p.expected_iterations >= 0 {
         out += &format!("/~{}", p.expected_iterations);
     }
@@ -743,6 +754,24 @@ fn publish_positions(shared: &Mutex<Shared>, wembed: &mut Wembed) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_format_can_use_monotonic_iteration_count() {
+        let progress = Progress {
+            layer: 0,
+            num_layers: 1,
+            num_vertices: 10,
+            iteration: 0,
+            expected_iterations: 100,
+            layer_seconds: 0.0,
+            eta_seconds: -1.0,
+            layer_finished: false,
+        };
+        assert_eq!(
+            format_progress_with_iteration(&progress, 3),
+            "iter 3/~100"
+        );
+    }
 
     #[test]
     fn step_requests_are_consumed_one_at_a_time() {

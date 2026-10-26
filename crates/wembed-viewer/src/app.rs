@@ -35,7 +35,7 @@ use crate::cli::{EdgeColorSource, ScalarSource, VertexColorSource};
 use crate::config::CameraConfig;
 use crate::convergence::Convergence;
 use crate::density::DensityAnchors;
-use crate::embedder::{format_progress, TopologyProducer, Update};
+use crate::embedder::{format_progress_with_iteration, TopologyProducer, Update};
 use crate::exporter::ExportConfig;
 use crate::framing::{
     best_rotation_deg_for_aspect, point_radius, scaled_sizing, SizingConfig, View, Q_BUFFER, Q_HI,
@@ -2047,7 +2047,10 @@ fn build_ui(
                 ui.painter().circle_filled(rect.center(), d * 0.3, color);
                 ui.strong(word);
                 match progress {
-                    Some(p) => ui.label(format!("· {}", format_progress(&p))),
+                    Some(p) => ui.label(format!(
+                        "· {}",
+                        format_progress_with_iteration(&p, iteration)
+                    )),
                     None => ui.label(format!("· iter {iteration}")),
                 };
             });
